@@ -1,22 +1,15 @@
 """
-Chạy script này 1 LẦN DUY NHẤT trên RunPod Pod (có attach Network Volume).
+Chạy 1 lần trên RunPod Pod (CPU/GPU) có attach Network Volume → lưu weights.
 
-Đường mount của Network Volume:
-  - Pod: volume thay thế ổ mặc định, gắn tại /workspace (RunPod không cho đổi trên UI).
-  - Serverless worker: /runpod-volume (handler đọc model từ đó).
+Volume trên Pod gắn tại /workspace → mặc định SAVE_DIR=/workspace/qwen35-awq.
 
-Cùng một volume: tải vào /workspace/qwen35-awq trên Pod thì Serverless vẫn thấy
-cùng dữ liệu dưới /runpod-volume/qwen35-awq.
-
-Ghi đè thư mục (nếu cần):
-  WEIGHTS_DIR=/đường/khác python download_model.py
+Ghi đè: WEIGHTS_DIR=/đường/khác python download_model.py
 """
 
 import os
 from huggingface_hub import snapshot_download
 
 MODEL_REPO = "cyankiwi/Qwen3.5-35B-A3B-AWQ-4bit"
-# Mặc định cho Pod (Secure Cloud). Serverless dùng /runpod-volume — cùng volume, khác mount point.
 SAVE_DIR = os.environ.get("WEIGHTS_DIR", "/workspace/qwen35-awq")
 
 def main():

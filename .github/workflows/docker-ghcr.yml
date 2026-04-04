@@ -1,7 +1,7 @@
 # Build & push image lên GitHub Container Registry (ghcr.io).
 # Mỗi lần push lên main/master (và chỉ khi đổi các file liên quan) → image mới.
 #
-# Image dùng trên RunPod: ghcr.io/<owner>/<repo>:latest
+# Image RunPod (GPU Pod): ghcr.io/<owner>/<repo>:latest — entrypoint vLLM serve
 # Lần đầu: GitHub → repo → Packages → package vừa tạo → Package settings →
 #   Visibility (public/private) và (tuỳ chọn) link với repo.
 
@@ -12,7 +12,7 @@ on:
     branches: [main, master]
     paths:
       - Dockerfile
-      - handler.py
+      - docker-entrypoint.sh
       - download_model.py
       - .github/workflows/docker-ghcr.yml
   workflow_dispatch:

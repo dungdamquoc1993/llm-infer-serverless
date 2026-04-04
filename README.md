@@ -1,167 +1,95 @@
-# Qwen3.5-35B-A3B AWQ 4-bit — RunPod Serverless
+# Qwen3.5-35B-A3B AWQ 4-bit — RunPod **GPU Pod** + vLLM
 
-## Cấu trúc project
+Một **container** chạy `vllm serve` (API tương thích OpenAI). Weights nằm trên **Network Volume**; image không đóng gói model.
+
+## Cấu trúc
 
 ```
-qwen3-5_serverless/
-├── Dockerfile           # Image cho serverless worker
-├── handler.py           # RunPod serverless handler (vLLM)
-├── download_model.py    # Script download weights vào Network Volume (chạy 1 lần)
-├── requirements.txt
-└── README.md
+├── Dockerfile              # Image: CUDA + vLLM, entrypoint = vllm serve
+├── docker-entrypoint.sh    # Tham số từ biến môi trường
+├── download_model.py       # Tải weights lên volume (chạy 1 lần)
+├── requirements.txt        # Chỉ cho download_model ngoài Docker
+└── .github/workflows/      # Build & push GHCR (tuỳ chọn)
 ```
 
 ---
 
-## Bước 1 — Tạo RunPod Network Volume
+## 1. Network Volume
 
-1. Vào **RunPod → Storage → + Network Volume**
-2. Tên: `qwen35-weights`
-3. Dung lượng: **30 GB**
-4. Region: chọn cùng region bạn sẽ deploy serverless
+RunPod → Storage → volume **cùng region** với GPU Pod, size **≥ 30 GB**.
 
 ---
 
-## Bước 2 — Download weights vào Volume (chạy 1 lần)
+## 2. Tải weights (một lần)
 
-### Mount point: Pod khác Serverless (RunPod không hiện chữ “mount point” khi tạo Pod)
-
-Theo [Network volumes — RunPod](https://docs.runpod.io/storage/network-volumes):
-
-| Loại | Volume của bạn xuất hiện ở đâu |
-|------|----------------------------------|
-| **Pod** | Thường gắn tại **`/workspace`** (volume thay thế ổ mặc định của pod). UI chỉ bắt chọn volume, **không** có ô nhập mount path. |
-| **Serverless** | Gắn tại **`/runpod-volume`** |
-
-Cùng một Network Volume: file bạn tải vào `/workspace/qwen35-awq` trên pod sẽ nằm đúng chỗ mà worker đọc qua `/runpod-volume/qwen35-awq` (cùng volume, hai đường mount khác nhau).
-
-1. **Tạo pod tạm** trên RunPod (Secure Cloud, vì Network Volume chỉ gắn được với Pod loại này):
-   - Template: `RunPod Pytorch 2.4` hoặc Ubuntu — miễn có Python
-   - GPU/CPU: tùy (chỉ cần internet ổn để kéo ~22GB)
-   - **Attach Network Volume** `qwen35-weights` — chỉ cần chọn volume trong danh sách, không cần gõ mount path
-
-2. Mở **terminal** trong pod, chạy:
-   ```bash
-   pip install huggingface_hub
-   python download_model.py
-   ```
-   Chờ ~10-15 phút (22GB). Xong thì **terminate pod** (không cần nữa).
-
----
-
-## Bước 3 — Build và push Docker image
-
-Chạy trên máy local của bạn (cần Docker + tài khoản Docker Hub):
+Trên pod (CPU rẻ hoặc GPU) có volume gắn tại **`/workspace`**:
 
 ```bash
-docker build -t YOUR_DOCKERHUB_USERNAME/qwen35-serverless:latest .
-docker push YOUR_DOCKERHUB_USERNAME/qwen35-serverless:latest
+pip install huggingface_hub
+cd /workspace
+# copy download_model.py hoặc clone repo
+python download_model.py
 ```
 
-Thay `YOUR_DOCKERHUB_USERNAME` bằng username Docker Hub của bạn.
+Ghi đè thư mục: `WEIGHTS_DIR=/đường/khác python download_model.py`
+
+Model private: `HF_TOKEN=... python download_model.py`
 
 ---
 
-## Bước 4 — Tạo Serverless Endpoint trên RunPod
+## 3. GPU Pod — dùng image có sẵn hoặc build repo
 
-1. Vào **RunPod → Serverless → + New Endpoint**
-2. Chọn **Custom deployment → Deploy from Docker registry**
-3. Điền thông tin:
+- GPU **≥ 24 GB** VRAM, attach **cùng volume** → weights tại **`/workspace/qwen35-awq`** (mặc định).
 
-| Field | Giá trị |
-|---|---|
-| Container Image | `YOUR_DOCKERHUB_USERNAME/qwen35-serverless:latest` |
-| GPU | RTX 4090 (24GB) hoặc A40 (48GB) |
-| Min Workers | `0` |
-| Max Workers | `3` (tùy budget) |
-| Idle Timeout | `5` phút |
-| Network Volume | Chọn `qwen35-weights` → `/runpod-volume` |
+### Biến môi trường (container)
 
-4. Thêm **Environment Variables** (nếu cần):
-   - `MAX_MODEL_LEN` = `32768`
-   - `GPU_MEMORY_UTIL` = `0.90`
+| Biến | Mặc định | Ý nghĩa |
+|------|----------|---------|
+| `MODEL_PATH` | `/workspace/qwen35-awq` | Thư mục model trên volume |
+| `MAX_MODEL_LEN` | `32768` | Giảm nếu OOM (vd `16384`) |
+| `GPU_MEMORY_UTIL` | `0.90` | Tỷ lệ VRAM cho vLLM |
+| `VLLM_PORT` | `8000` | Cổng HTTP |
+| `VLLM_API_KEY` | (trống) | Nếu set → vLLM bật `--api-key` |
 
-5. Click **Deploy** → đợi worker khởi động lần đầu (~2-3 phút)
+### Image từ GHCR
 
----
+Deploy pod với image `ghcr.io/<owner>/<repo>:latest`, **không** cần start command tùy chỉnh (entrypoint đã gọi `vllm serve`).
 
-## Bước 5 — Gọi API
+Expose **HTTP port 8000** (hoặc đúng `VLLM_PORT`).
 
-### Dùng messages (OpenAI format)
+### Build local / tự push
 
-```python
-import requests
-
-RUNPOD_API_KEY = "your_api_key_here"
-ENDPOINT_ID = "your_endpoint_id_here"
-
-response = requests.post(
-    f"https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync",
-    headers={
-        "Authorization": f"Bearer {RUNPOD_API_KEY}",
-        "Content-Type": "application/json",
-    },
-    json={
-        "input": {
-            "messages": [
-                {"role": "system", "content": "Bạn là một trợ lý AI hữu ích."},
-                {"role": "user", "content": "Giải thích kiến trúc Transformer"},
-            ],
-            "max_tokens": 2048,
-            "temperature": 1.0,
-            "enable_thinking": True,   # False để tắt chế độ thinking
-        }
-    },
-    timeout=300,
-)
-
-result = response.json()
-print(result["output"]["output"])         # final response
-print(result["output"]["thinking"])       # thinking content (nếu enable)
-print(result["output"]["usage"])          # token usage
-print(result["output"]["tokens_per_second"])
-```
-
-### Dùng prompt thẳng
-
-```python
-response = requests.post(
-    f"https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync",
-    headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
-    json={
-        "input": {
-            "prompt": "Viết một bài thơ về Hà Nội",
-            "max_tokens": 512,
-            "temperature": 0.7,
-            "enable_thinking": False,
-        }
-    },
-)
-```
-
-### Response format
-
-```json
-{
-  "output": {
-    "output": "Nội dung trả lời chính...",
-    "thinking": "Quá trình suy nghĩ của model...",
-    "usage": {
-      "prompt_tokens": 45,
-      "completion_tokens": 312,
-      "total_tokens": 357
-    },
-    "elapsed_seconds": 8.3,
-    "tokens_per_second": 37.6
-  }
-}
+```bash
+docker build -t qwen35-vllm .
+docker run --gpus all -e MODEL_PATH=/path/to/weights -p 8000:8000 qwen35-vllm
 ```
 
 ---
 
-## Lưu ý
+## 4. Gọi API (OpenAI client)
 
-- **Cold start** lần đầu mất ~2-3 phút (load 22GB weights vào VRAM)
-- Với `min_workers=0`, khi không có request thì RunPod scale về 0, **không tốn tiền**
-- Nếu gặp OOM, giảm `MAX_MODEL_LEN` xuống `16384`
-- Model mặc định chạy **thinking mode** — tắt bằng `"enable_thinking": false`
+`model` trong body thường là **đường dẫn local trên server** (giống doc vLLM), ví dụ:
+
+```bash
+curl -s "http://YOUR_POD:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "/workspace/qwen35-awq",
+    "messages": [{"role": "user", "content": "2+2=?"}],
+    "max_tokens": 128
+  }'
+```
+
+Python: `openai` SDK với `base_url="http://YOUR_POD:8000/v1"`. Nếu bật `VLLM_API_KEY`, set `api_key` tương ứng.
+
+---
+
+## OOM
+
+Giảm `MAX_MODEL_LEN` hoặc `GPU_MEMORY_UTIL`.
+
+---
+
+## GHCR
+
+Workflow `.github/workflows/docker-ghcr.yml` build khi đổi `Dockerfile`, `docker-entrypoint.sh`, `download_model.py`.

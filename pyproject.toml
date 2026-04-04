@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "qwen35-vllm-runpod"
+version = "0.2.0"
+description = "Qwen3.5 AWQ trên RunPod GPU Pod — image vLLM + script tải weights"
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+huggingface_hub = ">=0.24.0"
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"
