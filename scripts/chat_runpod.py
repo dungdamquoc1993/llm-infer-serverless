@@ -38,7 +38,7 @@ def main() -> int:
         default=None,
         help="Câu hỏi (mặc định: biến VLLM_PROMPT hoặc '2+2=?')",
     )
-    p.add_argument("--max-tokens", type=int, default=int(os.environ.get("VLLM_MAX_TOKENS", "256")))
+    p.add_argument("--max-tokens", type=int, default=int(os.environ.get("VLLM_MAX_TOKENS", "4096")))
     args = p.parse_args()
 
     base = os.environ.get("VLLM_BASE_URL", "").strip()

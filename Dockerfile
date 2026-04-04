@@ -14,7 +14,7 @@ COPY download_model.py .
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV MODEL_PATH="/workspace/qwen35-awq"
-ENV MAX_MODEL_LEN="32768"
+ENV MAX_MODEL_LEN="200000"
 ENV GPU_MEMORY_UTIL="0.90"
 ENV VLLM_PORT="8000"
 

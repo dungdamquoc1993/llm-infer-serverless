@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODEL_PATH="${MODEL_PATH:-/workspace/qwen35-awq}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-200000}"
 GPU_MEMORY_UTIL="${GPU_MEMORY_UTIL:-0.90}"
 PORT="${VLLM_PORT:-8000}"
 
@@ -14,6 +14,8 @@ cmd=(
   --port "$PORT"
   --max-model-len "$MAX_MODEL_LEN"
   --gpu-memory-utilization "$GPU_MEMORY_UTIL"
+  --limit-mm-per-prompt '{"image": 0, "video": 0}'
+  --enforce-eager
 )
 
 if [[ -n "${VLLM_API_KEY:-}" ]]; then

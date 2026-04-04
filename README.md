@@ -47,7 +47,7 @@ Model private: `HF_TOKEN=... python download_model.py`
 | Biến | Mặc định | Ý nghĩa |
 |------|----------|---------|
 | `MODEL_PATH` | `/workspace/qwen35-awq` | Thư mục model trên volume |
-| `MAX_MODEL_LEN` | `32768` | Giảm nếu OOM (vd `16384`) |
+| `MAX_MODEL_LEN` | `200000` | Giới hạn token (prompt + sinh); **GPU 24GB** thường phải **hạ** (vd `32768`–`65536`) tránh OOM khi khởi động hoặc context dài |
 | `GPU_MEMORY_UTIL` | `0.90` | Tỷ lệ VRAM cho vLLM |
 | `VLLM_PORT` | `8000` | Cổng HTTP |
 | `VLLM_API_KEY` | (trống) | Nếu set → vLLM bật `--api-key` |
@@ -97,9 +97,9 @@ python scripts/chat_runpod.py "Viết một câu chào bằng tiếng Việt"
 
 ---
 
-## OOM
+## OOM / pod không lên được sau khi tăng context
 
-Giảm `MAX_MODEL_LEN` hoặc `GPU_MEMORY_UTIL`.
+`MAX_MODEL_LEN=200000` cấp cho vLLM “trần” rất cao; **KV cache** tính theo đó nên **GPU 24GB** (A5000, 4090, …) thường **không đủ** — hạ trên RunPod → Environment, ví dụ `MAX_MODEL_LEN=32768` hoặc `65536`, rồi restart pod. GPU VRAM lớn hơn mới có thể giữ gần 200k.
 
 ## Lỗi `undefined symbol: cuMemcpyBatchAsync` (vLLM `_C.abi3.so`)
 
