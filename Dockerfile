@@ -2,12 +2,12 @@ FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 WORKDIR /app
 
-# Cài vLLM nightly (bắt buộc để support Qwen3.5)
-RUN pip install --no-cache-dir \
-    "vllm @ https://wheels.vllm.ai/nightly/vllm-1.0.0.dev-cp311-cp311-manylinux1_x86_64.whl" \
-    runpod \
-    huggingface_hub \
-    compressed-tensors
+# vLLM: không dùng URL wheel cố định (nightly đổi tên → 404). Lấy bản mới nhất từ index.
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        vllm runpod huggingface_hub compressed-tensors \
+        --pre \
+        --extra-index-url https://wheels.vllm.ai/nightly
 
 COPY handler.py .
 COPY download_model.py .
