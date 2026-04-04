@@ -8,6 +8,8 @@ package-mode = false
 [tool.poetry.dependencies]
 python = "^3.11"
 huggingface_hub = ">=0.24.0"
+openai = ">=1.40.0"
+python-dotenv = ">=1.0.0"
 
 [build-system]
 requires = ["poetry-core>=1.8.0"]

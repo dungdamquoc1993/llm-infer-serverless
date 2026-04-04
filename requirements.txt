@@ -1,2 +1,6 @@
-# Chỉ cần khi chạy download_model.py ngoài Docker (pod CPU, máy local).
+# download_model.py (pod CPU / local)
 huggingface_hub>=0.24.0
+
+# scripts/chat_runpod.py (gọi vLLM qua OpenAI SDK)
+openai>=1.40.0
+python-dotenv>=1.0.0
