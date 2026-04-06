@@ -113,7 +113,6 @@ elif WANDB_PROJECT:
     os.environ["WANDB_PROJECT"] = WANDB_PROJECT
     print(f"[INFO] W&B: project={WANDB_PROJECT} (dùng key đã login sẵn)")
 else:
-    os.environ["WANDB_DISABLED"] = "true"
     print("[INFO] W&B disabled")
 
 # ── Import heavy libs ─────────────────────────────────────────────────────────
@@ -122,10 +121,67 @@ import torch
 from unsloth import FastLanguageModel
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
+
+# DataCollatorForCompletionOnlyLM bị remove khỏi TRL >= 0.13 top-level export
+# Thử các path theo thứ tự, fallback về custom implementation
 try:
     from trl import DataCollatorForCompletionOnlyLM
 except ImportError:
-    from trl.trainer import DataCollatorForCompletionOnlyLM
+    try:
+        from trl.trainer import DataCollatorForCompletionOnlyLM
+    except ImportError:
+        try:
+            from trl.trainer.utils import DataCollatorForCompletionOnlyLM
+        except ImportError:
+            from dataclasses import dataclass as _dc
+            from typing import Any as _Any, List as _List, Optional as _Opt
+
+            @_dc
+            class DataCollatorForCompletionOnlyLM:
+                """
+                Custom fallback: mask mọi token trừ phần assistant response.
+                Tìm từng <|im_start|>assistant\\n, unmask đến <|im_end|> tiếp theo.
+                """
+                response_template: _List[int]
+                tokenizer: _Any
+                instruction_template: _Opt[_List[int]] = None
+                ignore_index: int = -100
+
+                def __post_init__(self):
+                    _im_end = self.tokenizer.encode("<|im_end|>", add_special_tokens=False)
+                    self._im_end_id = _im_end[-1] if _im_end else None
+
+                def __call__(self, features):
+                    import torch
+                    batch = self.tokenizer.pad(features, return_tensors="pt", padding=True)
+                    labels = batch["input_ids"].clone()
+                    tlen = len(self.response_template)
+
+                    for i in range(labels.shape[0]):
+                        seq = labels[i].tolist()
+                        labels[i] = self.ignore_index  # default: mask toàn bộ
+
+                        j = 0
+                        while j <= len(seq) - tlen:
+                            if seq[j : j + tlen] == self.response_template:
+                                start = j + tlen  # bắt đầu content assistant
+                                end = start
+                                # Unmask đến <|im_end|> (bao gồm cả token đó)
+                                while end < len(seq):
+                                    if self._im_end_id is not None and seq[end] == self._im_end_id:
+                                        end += 1
+                                        break
+                                    end += 1
+                                labels[i, start:end] = batch["input_ids"][i, start:end]
+                                j = end
+                            else:
+                                j += 1
+
+                    batch["labels"] = labels
+                    return batch
+
+            print("[INFO] DataCollatorForCompletionOnlyLM: dùng custom fallback implementation")
+
 from transformers import TrainerCallback
 
 print(f"[INFO] torch={torch.__version__}  CUDA={torch.version.cuda}  "
