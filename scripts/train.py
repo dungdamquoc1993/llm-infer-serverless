@@ -121,7 +121,11 @@ print("\n[INFO] Loading Unsloth + TRL...")
 import torch
 from unsloth import FastLanguageModel
 from datasets import load_dataset
-from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
+from trl import SFTTrainer, SFTConfig
+try:
+    from trl import DataCollatorForCompletionOnlyLM
+except ImportError:
+    from trl.trainer import DataCollatorForCompletionOnlyLM
 from transformers import TrainerCallback
 
 print(f"[INFO] torch={torch.__version__}  CUDA={torch.version.cuda}  "
