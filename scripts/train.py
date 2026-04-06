@@ -24,6 +24,35 @@ import os
 import sys
 from pathlib import Path
 
+# ── Kiểm tra version dependencies sớm (fail fast, message rõ ràng) ───────────
+def _check_versions():
+    import importlib.metadata as _meta
+    from packaging.version import Version as V
+
+    checks = [
+        ("transformers", "5.2.0",
+         'pip install --upgrade "transformers>=5.2.0" unsloth'),
+        ("trl",          "0.8.0",
+         'pip install --upgrade trl'),
+    ]
+    ok = True
+    for pkg, minimum, fix in checks:
+        try:
+            ver = V(_meta.version(pkg))
+            if ver < V(minimum):
+                print(f"[WARN] {pkg}=={ver} < {minimum} (required). Fix: {fix}")
+                ok = False
+            else:
+                print(f"[OK]   {pkg}=={ver}")
+        except _meta.PackageNotFoundError:
+            print(f"[ERROR] Package '{pkg}' chưa cài. Fix: {fix}")
+            ok = False
+    if not ok:
+        print("[ERROR] Version check failed — chạy lệnh fix ở trên rồi thử lại.")
+        sys.exit(1)
+
+_check_versions()
+
 # ── Load .env ─────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent
 try:

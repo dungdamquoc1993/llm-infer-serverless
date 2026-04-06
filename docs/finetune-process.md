@@ -181,6 +181,103 @@ Kiểm tra nhanh đã chạy:
 
 ---
 
+## 11. Troubleshooting nhanh trên RunPod (các lỗi đã gặp)
+
+### 11.1. `HF_DATASET_REPO` có trong `scripts/.env` nhưng script vẫn báo “local JSONL”
+
+`scripts/train.py` **chỉ load `.env` ở root repo**:
+
+- Đúng: `/workspace/llm-infer-serverless/.env`
+- Sai: `/workspace/llm-infer-serverless/scripts/.env`
+
+Fix:
+
+```bash
+cd /workspace/llm-infer-serverless/scripts
+cp .env ../.env
+```
+
+### 11.2. `UnicodeDecodeError` khi đọc `.env`
+
+Ví dụ:
+
+`UnicodeDecodeError: 'utf-8' codec can't decode bytes ...`
+
+Nguyên nhân thường là file `.env` trên pod bị lưu **không phải UTF-8** (hoặc bị copy/paste dính ký tự “lạ” → hiện `�`).
+
+Fix:
+
+- Mở và lưu lại `.env` dạng **UTF-8** (không BOM), tránh ký tự “smart quotes”.
+- Nhanh nhất: tạo lại `.env` từ `scripts/.env.example` rồi chỉnh từng dòng.
+
+### 11.3. `KeyError: 'qwen3_5'` / Transformers không nhận kiến trúc Qwen3.5
+
+Thông báo điển hình:
+
+- `Transformers does not recognize this architecture` hoặc
+- `Unsloth: Your transformers version ... does not support Qwen3.5. The minimum required version is 5.2.0`
+
+Fix (trên pod):
+
+```bash
+pip install --upgrade "transformers>=5.2.0" unsloth
+```
+
+Lưu ý: upgrade `transformers` lên 5.x có thể gây **xung đột với `vllm`** (vì `vllm` thường pin `transformers<5`). Việc này **không ảnh hưởng training**, nhưng nếu pod dùng `vllm` cùng env thì nên tách môi trường.
+
+### 11.4. `ImportError: cannot import name 'DataCollatorForCompletionOnlyLM' from 'trl'`
+
+Một số phiên bản TRL đã đổi/loại bỏ export của `DataCollatorForCompletionOnlyLM`. Nếu gặp lỗi import:
+
+- Ưu tiên: cập nhật `scripts/train.py` để có fallback import hoặc custom collator (repo hiện đã có fallback).
+
+### 11.5. `AttributeError: 'Qwen3VLProcessor' object has no attribute 'encode'`
+
+Qwen3.5-9B có thể được load qua Unsloth dưới dạng **VL Processor** (không phải tokenizer thuần text). Khi đó cần dùng `processor.tokenizer`.
+
+Repo hiện đã fix trong `scripts/train.py` bằng cách:
+
+- Nếu object trả về có `tokenizer` attribute → lấy `tokenizer = tokenizer.tokenizer` cho text SFT.
+
+### 11.6. `flash_attn` / Triton kernels warning
+
+Các dòng kiểu:
+
+- `Failed to import Triton kernels...`
+- `Flash Attention 2 installation seems to be broken. Using Xformers instead.`
+
+Thường là **warning**; training vẫn chạy, chỉ là chậm hơn một chút.
+
+---
+
+## 12. Chạy train an toàn (không chết khi rớt SSH) với `tmux`
+
+Khuyến nghị luôn chạy train trong `tmux` trên pod:
+
+```bash
+tmux new -s train
+cd /workspace/llm-infer-serverless/scripts
+python train.py
+```
+
+Detach (thoát tmux nhưng tiến trình vẫn chạy):
+
+- Nhấn `Ctrl+b`, thả ra, rồi nhấn `d`
+
+Vào lại:
+
+```bash
+tmux attach -t train
+```
+
+Xem danh sách session:
+
+```bash
+tmux ls
+```
+
+---
+
 ## 11. File liên quan nhanh
 
 - Schema FB: `data/sql/02_schema_facebook.sql`
