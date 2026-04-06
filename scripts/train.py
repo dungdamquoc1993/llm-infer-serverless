@@ -221,6 +221,12 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 )
 _vram("sau load model")
 
+# Qwen3.5-9B là VL model — Unsloth trả về Processor thay vì Tokenizer thuần.
+# Với text-only SFT, cần extract inner tokenizer (có đủ encode/pad/apply_chat_template).
+if hasattr(tokenizer, "tokenizer"):
+    tokenizer = tokenizer.tokenizer
+    print("[INFO] VL Processor detected → dùng processor.tokenizer cho text SFT")
+
 # ── Thêm LoRA adapter ─────────────────────────────────────────────────────────
 print("[INFO] Gắn LoRA adapter...")
 if torch.cuda.is_available():
