@@ -122,12 +122,35 @@ import torch
 from unsloth import FastLanguageModel
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
+from transformers import TrainerCallback
 
 print(f"[INFO] torch={torch.__version__}  CUDA={torch.version.cuda}  "
       f"GPU={torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'}")
 
+# ── VRAM helpers ───────────────────────────────────────────────────────────────
+def _gb(b: int) -> float:
+    return b / 1024 ** 3
+
+def _vram(label: str = "") -> None:
+    """In VRAM hiện tại và peak kể từ lần reset gần nhất."""
+    if not torch.cuda.is_available():
+        return
+    alloc   = _gb(torch.cuda.memory_allocated())
+    reserv  = _gb(torch.cuda.memory_reserved())
+    peak_a  = _gb(torch.cuda.max_memory_allocated())
+    peak_r  = _gb(torch.cuda.max_memory_reserved())
+    tag = f"[VRAM] {label:30s}" if label else "[VRAM]"
+    print(f"{tag}  alloc={alloc:.2f}GB  reserved={reserv:.2f}GB  "
+          f"peak_alloc={peak_a:.2f}GB  peak_reserved={peak_r:.2f}GB")
+
+# Reset counter ngay từ đầu để đo peak từ điểm xuất phát sạch
+if torch.cuda.is_available():
+    torch.cuda.reset_peak_memory_stats()
+
 # ── Load model + tokenizer ────────────────────────────────────────────────────
 print(f"\n[INFO] Loading model: {MODEL_PATH} ...")
+if torch.cuda.is_available():
+    torch.cuda.reset_peak_memory_stats()
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL_PATH,
     max_seq_length=MAX_SEQ_LEN,
@@ -136,9 +159,12 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     token=HF_TOKEN,
     attn_implementation="flash_attention_2" if USE_FLASH_ATTN else "eager",
 )
+_vram("sau load model")
 
 # ── Thêm LoRA adapter ─────────────────────────────────────────────────────────
 print("[INFO] Gắn LoRA adapter...")
+if torch.cuda.is_available():
+    torch.cuda.reset_peak_memory_stats()
 model = FastLanguageModel.get_peft_model(
     model,
     r=LORA_R,
@@ -155,6 +181,7 @@ model = FastLanguageModel.get_peft_model(
 trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 total     = sum(p.numel() for p in model.parameters())
 print(f"[INFO] Trainable params: {trainable:,} / {total:,} ({trainable/total*100:.2f}%)")
+_vram("sau gắn LoRA")
 
 # ── Load dataset ──────────────────────────────────────────────────────────────
 print("\n[INFO] Loading dataset...")
@@ -260,6 +287,20 @@ training_args = SFTConfig(
 print(f"[INFO] bf16={bf16_ok}  optim=adamw_8bit  "
       f"effective_batch={BATCH_SIZE * GRAD_ACCUM}")
 
+# ── VRAM callback ─────────────────────────────────────────────────────────────
+class VramCallback(TrainerCallback):
+    """Log peak VRAM sau mỗi logging step và sau mỗi evaluation."""
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if torch.cuda.is_available():
+            peak = _gb(torch.cuda.max_memory_allocated())
+            reserved = _gb(torch.cuda.memory_reserved())
+            step = state.global_step
+            print(f"[VRAM] step={step:>6d}  peak_alloc={peak:.2f}GB  reserved={reserved:.2f}GB")
+
+    def on_evaluate(self, args, state, control, **kwargs):
+        _vram(f"eval step={state.global_step}")
+
 # ── Trainer ───────────────────────────────────────────────────────────────────
 trainer = SFTTrainer(
     model=model,
@@ -268,6 +309,7 @@ trainer = SFTTrainer(
     eval_dataset=val_ds,
     data_collator=collator,
     args=training_args,
+    callbacks=[VramCallback()],
 )
 
 # ── Train ─────────────────────────────────────────────────────────────────────
@@ -275,10 +317,15 @@ print("\n[INFO] Bắt đầu training...")
 print(f"       Output: {OUTPUT_DIR}")
 print()
 
+if torch.cuda.is_available():
+    torch.cuda.reset_peak_memory_stats()   # reset để đo peak riêng cho training loop
+_vram("trước khi train")
+
 trainer_output = trainer.train()
 
 print("\n[INFO] Training xong.")
 print(f"       Train loss cuối : {trainer_output.training_loss:.4f}")
+_vram("sau khi train (peak toàn bộ vòng train)")
 
 # ── Lưu LoRA adapter (~200-500 MB) ───────────────────────────────────────────
 adapter_dir = os.path.join(OUTPUT_DIR, "final_adapter")
