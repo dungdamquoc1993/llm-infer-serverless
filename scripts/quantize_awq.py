@@ -17,17 +17,32 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import sys
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in_dir", required=True, help="Input HF model folder (merged FP16/BF16).")
-    ap.add_argument("--out_dir", required=True, help="Output folder for AWQ quantized model.")
-    ap.add_argument("--w_bit", type=int, default=4, help="Weight bit-width (use 4 for vLLM).")
-    ap.add_argument("--group_size", type=int, default=128, help="Group size, commonly 128.")
-    ap.add_argument("--zero_point", action="store_true", help="Enable zero_point (default True in many examples).")
-    ap.add_argument("--no_zero_point", action="store_true", help="Force zero_point=False (e.g. for some kernels).")
+    ap.add_argument(
+        "--in_dir", required=True, help="Input HF model folder (merged FP16/BF16)."
+    )
+    ap.add_argument(
+        "--out_dir", required=True, help="Output folder for AWQ quantized model."
+    )
+    ap.add_argument(
+        "--w_bit", type=int, default=4, help="Weight bit-width (use 4 for vLLM)."
+    )
+    ap.add_argument(
+        "--group_size", type=int, default=128, help="Group size, commonly 128."
+    )
+    ap.add_argument(
+        "--zero_point",
+        action="store_true",
+        help="Enable zero_point (default True in many examples).",
+    )
+    ap.add_argument(
+        "--no_zero_point",
+        action="store_true",
+        help="Force zero_point=False (e.g. for some kernels).",
+    )
     ap.add_argument("--version", default="GEMM", help='AWQ version, commonly "GEMM".')
     ap.add_argument("--trust-remote-code", action="store_true")
     args = ap.parse_args()
@@ -49,16 +64,16 @@ def main() -> int:
     try:
         from awq import AutoAWQForCausalLM
     except ModuleNotFoundError:
-        print('[ERROR] Missing dependency: autoawq/awq. Install with one of:')
-        print('  pip install -U autoawq')
-        print('  # or')
+        print("[ERROR] Missing dependency: autoawq/awq. Install with one of:")
+        print("  pip install -U autoawq")
+        print("  # or")
         print('  pip install -U "autoawq[triton]"')
         return 2
 
     try:
         from transformers import AutoTokenizer
     except ModuleNotFoundError:
-        print('[ERROR] Missing dependency: transformers. Install with:')
+        print("[ERROR] Missing dependency: transformers. Install with:")
         print('  pip install -U "transformers>=5.2.0"')
         return 2
 
@@ -80,7 +95,9 @@ def main() -> int:
 
     print("[INFO] Loading model (this can take a while)...")
     model = AutoAWQForCausalLM.from_pretrained(str(in_dir))
-    tokenizer = AutoTokenizer.from_pretrained(str(in_dir), trust_remote_code=args.trust_remote_code)
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(in_dir), trust_remote_code=args.trust_remote_code
+    )
 
     print("[INFO] Quantizing (AWQ)...")
     model.quantize(tokenizer, quant_config=quant_config)
@@ -95,4 +112,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
