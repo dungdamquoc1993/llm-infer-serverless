@@ -138,10 +138,15 @@ Kiểm tra nhanh đã chạy:
    - QLoRA sẽ quantize 4-bit NF4 **on-the-fly** khi train, nên luôn tải bản bf16 gốc, không dùng GGUF/GPTQ.
 3. Fine-tune bằng `scripts/train.py`:
    - Stack: **Unsloth FastLanguageModel + TRL SFTTrainer + PEFT LoRA + bitsandbytes** trên `Qwen3.5-9B`.
-   - Dùng **QLoRA 4-bit** (`USE_QLORA=true`) để vừa RTX 4000 Ada 20GB (base 4-bit ~6.5GB, tổng ~13–16GB với optimizer + activation).
+   - Dùng **QLoRA 4-bit** (`USE_QLORA=true`) để tiết kiệm VRAM. Với GPU 16GB (RTX A4000) nên đặt `BATCH_SIZE=1`, `GRAD_ACCUM=16` (effective batch vẫn = 16).
    - Dataset: ưu tiên HF Hub (`HF_DATASET_REPO`), fallback local `dataset/train.jsonl` + `dataset/val.jsonl` nếu không set.
    - Thinking mode của Qwen3.5 (`<think>...</think>`) bị **tắt** khi apply chat template (`ENABLE_THINKING=false`) vì data shop chat không có thinking content.
    - LoRA config: `TARGET_MODULES=all-linear` để Unsloth tự chọn linear layers cho kiến trúc hybrid (Gated DeltaNet + Attention) của Qwen3.5; chỉ train adapter (vài % tham số).
+   - Sau khi train xong, script sẽ:
+     - Lưu adapter vào `OUTPUT_DIR/final_adapter`
+     - (Tuỳ chọn) push adapter lên HF Hub qua `ADAPTER_REPO`
+     - Merge adapter vào base model → full fine-tuned model BF16 vào `OUTPUT_DIR/merged_model` (bật/tắt bởi `MERGE_MODEL`)
+     - (Tuỳ chọn) push merged model lên HF Hub qua `MERGED_REPO`
 4. Theo dõi **train loss vs eval loss** (console hoặc W&B nếu set `WANDB_PROJECT`, `WANDB_API_KEY`); điều chỉnh epoch, learning rate, `max_seq_len` dựa trên VRAM và chất lượng.
 5. (Tùy chọn) Chia train/val theo `conversation_id` nếu muốn đánh giá “lạ thread” nghiêm hơn.
 
@@ -151,8 +156,9 @@ Kiểm tra nhanh đã chạy:
 
 - **Dockerfile** (root):
   - Base image: `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`.
-  - Cài: `transformers`, `datasets`, `trl`, `peft`, `bitsandbytes`, `accelerate`, `huggingface_hub`, `sentencepiece`, `wandb`, `scipy`, `python-dotenv`.
-  - Cài thêm: `unsloth[cu124-torch240]` từ GitHub (tự lo `flash-attn` và patch kernel để train nhanh hơn).
+  - Cài các package import trực tiếp trong `scripts/train.py`: `transformers`, `datasets`, `trl`, `wandb`, `python-dotenv`.
+  - Cài thêm: `unsloth[cu124-torch240]` từ GitHub.
+    - Unsloth sẽ tự kéo các dependency tương thích (ví dụ `peft`, `bitsandbytes`, `accelerate`, `huggingface_hub`, `sentencepiece`, `flash-attn`) để tránh xung đột version.
 - **Scripts train/infra** (root `scripts/`):
   - `upload_dataset.py` – upload `dataset/train.jsonl`, `dataset/val.jsonl` lên HF Hub (private), tạo README đơn giản, gợi ý `HF_DATASET_REPO`.
   - `download_model.py` – tải base model (`MODEL_REPO`, mặc định `Qwen/Qwen3.5-9B`) về Network Volume (`WEIGHTS_DIR`), bỏ qua file không cần như `*.gguf`, `original/`.
@@ -165,6 +171,9 @@ Kiểm tra nhanh đã chạy:
 - `MODEL_REPO`, `MODEL_PATH` – repo HF & đường dẫn base model trên Network Volume.
 - `HF_DATASET_REPO` – repo dataset trên HF; nếu không set, `train.py` dùng `dataset/*.jsonl` local.
 - `OUTPUT_DIR` – thư mục lưu checkpoints & adapter (`/workspace/lora_output`).
+- `ADAPTER_REPO` – (tuỳ chọn) repo HF để push adapter LoRA.
+- `MERGE_MODEL` – `true/false` để merge adapter vào base model sau khi train.
+- `MERGED_REPO` – (tuỳ chọn) repo HF để push merged full model (BF16).
 - `USE_QLORA`, `LORA_R`, `LORA_ALPHA`, `LORA_DROPOUT`, `TARGET_MODULES` – config LoRA/QLoRA (mặc định `TARGET_MODULES=all-linear` cho Qwen3.5).
 - `NUM_EPOCHS`, `BATCH_SIZE`, `GRAD_ACCUM`, `LR`, `MAX_SEQ_LEN`, `WARMUP_RATIO` – hyperparameter train.
 - `USE_FLASH_ATTN`, `ENABLE_THINKING` – tối ưu kernel & bật/tắt thinking mode của Qwen3.5.

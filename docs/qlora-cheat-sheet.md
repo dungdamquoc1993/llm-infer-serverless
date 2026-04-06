@@ -7,7 +7,7 @@ Tài liệu tham khảo nhanh (VRAM, vòng đời một lần train, dependency)
 ## Tài nguyên RunPod (ví dụ)
 
 - Container disk ~25 GB (image CUDA, PyTorch, libs)
-- Network volume ~40 GB (`/workspace/`: model, dataset, checkpoint LoRA)
+- Network volume ~60 GB (`/workspace/`: base model, checkpoints, adapter, merged model)
 
 ---
 
@@ -28,7 +28,9 @@ Tài liệu tham khảo nhanh (VRAM, vòng đời một lần train, dependency)
 └── /workspace/
     ├── base model weights (gốc, không đổi)
     ├── dataset
-    └── checkpoint (LoRA adapter lưu định kỳ) → Network Volume (~40GB)
+    ├── checkpoint (LoRA adapter lưu định kỳ)
+    ├── final_adapter/ (LoRA adapter cuối)
+    └── merged_model/ (full fine-tuned model BF16, tuỳ chọn)
 ```
 
 ---
@@ -80,9 +82,9 @@ PyTorch + CUDA có sẵn trong image — thường không cần `pip install tor
 |-----|---------|
 | **transformers** | Load model, tokenizer, config. Trung tâm stack HF. |
 | **datasets** | Load/stream dataset từ Hub hoặc file local. |
-| **peft** | LoRA / QLoRA — adapter nhỏ thay vì full fine-tune. |
 | **trl** | `SFTTrainer`, `DPOTrainer`, … — fine-tuning có giám sát / preference. |
-| **accelerate** | Multi-GPU, mixed precision — `trl`/`transformers` dùng bên dưới. |
+| **peft** | LoRA / QLoRA — adapter nhỏ thay vì full fine-tune (thường được Unsloth kéo theo). |
+| **accelerate** | Mixed precision, trainer runtime (thường được Unsloth/TRl kéo theo). |
 
 ### Quantization & memory
 
@@ -101,10 +103,9 @@ PyTorch + CUDA có sẵn trong image — thường không cần `pip install tor
 
 | Dep | Vai trò |
 |-----|---------|
-| **huggingface_hub** | Push/pull model, token, download weights. |
+| **huggingface_hub** | Push/pull model & dataset (gián tiếp qua `datasets`/`transformers`). |
 | **wandb** | Log loss, LR, … (checkpoint vẫn do trainer lưu). |
 | **sentencepiece** | Tokenizer — nhiều model gọi gián tiếp qua `transformers`. |
-| **scipy** | Thường là dependency phụ, ít gọi trực tiếp. |
 
 ### Quan hệ tổng thể
 
@@ -119,6 +120,16 @@ datasets      → feed data vào trainer
 wandb         → log metrics ra ngoài
 huggingface_hub → upload kết quả lên HF Hub
 ```
+
+---
+
+## QLoRA quan trọng: 4-bit chỉ tồn tại trong RAM lúc train
+
+- `load_in_4bit=True` (NF4) **không tạo ra một “model 4-bit file” trên disk**. Nó quantize on-the-fly khi load vào VRAM.
+- Kết quả train được lưu là **adapter LoRA** (`final_adapter/`).
+- Nếu muốn “một model hoàn chỉnh để inference”, cách đúng là:
+  - Merge adapter vào base model → tạo **merged model BF16** (`merged_model/`)
+  - Sau đó (nếu cần) mới quantize sang GGUF/GPTQ/AWQ để deploy.
 
 ---
 

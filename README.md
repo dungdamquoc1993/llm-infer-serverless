@@ -57,10 +57,17 @@ Script sẽ:
 
 #### 2.2. Chuẩn bị pod (RunPod)
 
-Trên pod (container được build từ `Dockerfile` ở root):
+Trên pod, bạn cần một container image đã cài đủ deps (build từ `Dockerfile` ở root).
+
+**Gợi ý workflow:**
+
+- Push code lên GitHub → GitHub Actions build/push image lên GHCR (xem `.github/workflows/docker-ghcr.yml`)
+- Tạo RunPod pod dùng image `ghcr.io/<github-user>/<repo>:latest`
+- SSH vào pod → `git clone` repo → copy `.env` → chạy scripts
 
 ```bash
-cd /workspace/qwen3-5_serverless   # ví dụ repo mount tại đây
+git clone https://github.com/<github-user>/<repo>.git /workspace/qwen3-5_serverless
+cd /workspace/qwen3-5_serverless
 cp scripts/.env.example .env       # template .env dành cho pod
 vim .env                           # điền HF_TOKEN, MODEL_REPO, HF_DATASET_REPO, OUTPUT_DIR, ...
 ```
@@ -92,8 +99,13 @@ Script `train.py` sẽ:
 - Sử dụng `DataCollatorForCompletionOnlyLM` để chỉ tính loss trên phần assistant.
 - Áp dụng LoRA với `TARGET_MODULES=all-linear` (Unsloth tự chọn linear layers phù hợp cho kiến trúc hybrid của Qwen3.5).
 - Lưu checkpoint vào `OUTPUT_DIR` và adapter cuối vào `OUTPUT_DIR/final_adapter`.
+- (Mới) Tuỳ chọn merge adapter vào base model → full fine-tuned model BF16 tại `OUTPUT_DIR/merged_model` (`MERGE_MODEL=true`) và có thể push lên HF Hub qua `MERGED_REPO`.
 
 Hyperparameters (epoch, batch size, gradient accumulation, learning rate, `MAX_SEQ_LEN`, …) cấu hình qua `scripts/.env.example` (copy sang `.env` trên pod rồi chỉnh).
+
+**Preset VRAM 16GB (RTX A4000):**
+
+- Đặt `BATCH_SIZE=1`, `GRAD_ACCUM=16` (effective batch vẫn = 16) để tránh OOM.
 
 ---
 
