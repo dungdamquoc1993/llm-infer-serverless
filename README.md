@@ -1,112 +1,112 @@
-# Qwen3.5-35B-A3B AWQ 4-bit — RunPod **GPU Pod** + vLLM
+# qwen3-5_serverless
 
-Một **container** chạy `vllm serve` (API tương thích OpenAI). Weights nằm trên **Network Volume**; image không đóng gói model.
+Repo hỗ trợ **fine-tune** model ngôn ngữ (hướng tới **Qwen3.5**) bằng **LoRA / QLoRA** trên môi trường GPU (ví dụ RunPod), với **dataset** lấy từ hội thoại **Facebook Messenger** đã lưu trong PostgreSQL (ứng dụng El Ripley).
 
-## Cấu trúc
-
-```
-├── Dockerfile              # Image: CUDA + vLLM, entrypoint = vllm serve
-├── docker-entrypoint.sh    # Tham số từ biến môi trường
-├── download_model.py       # Tải weights lên volume (chạy 1 lần)
-├── scripts/chat_runpod.py  # Gọi API từ máy bạn (OpenAI SDK + .env)
-├── requirements.txt
-└── .github/workflows/      # Build & push GHCR (tuỳ chọn)
-```
+Mục tiêu sản phẩm: model trả lời khách **đúng văn phong shop** (một fanpage cụ thể), không chỉ chung chung.
 
 ---
 
-## 1. Network Volume
+## Cấu trúc thư mục
 
-RunPod → Storage → volume **cùng region** với GPU Pod, size **≥ 30 GB**.
+| Đường dẫn | Nội dung |
+|-----------|----------|
+| **`dataset/`** | `train.jsonl`, `val.jsonl` (ChatML, mỗi dòng một sample) — output của pipeline export + clean. |
+| **`data/`** | Postgres qua Docker Compose, SQL schema, script **export inbox → JSONL**, `clean_dataset.py`, `pyproject.toml` riêng (môi trường nhẹ cho data). |
+| **`scripts/`** | Script phục vụ train trên GPU / RunPod: upload dataset lên HF, download base model, train QLoRA, `.env.example` cho pod. |
+| **`docs/`** | Tài liệu tiến trình dataset, cheat sheet QLoRA/stack train, ghi chú RunPod. |
+| **`pyproject.toml` (root)** | Dependencies **train** (torch, transformers, trl, peft, bitsandbytes, unsloth, …). |
 
 ---
 
-## 2. Tải weights (một lần)
+## Yêu cầu nhanh
 
-Trên pod (CPU rẻ hoặc GPU) có volume gắn tại **`/workspace`**:
+- **Python 3.11+**
+- **Poetry** (khuyến nghị) — hai môi trường tách: `data/` (export) và root (train).
+- **Docker** — chạy PostgreSQL local khi phát triển (`data/docker-compose.yml`).
+
+---
+
+## Bắt đầu
+
+### 1. Dữ liệu & export JSONL
 
 ```bash
-pip install huggingface_hub
-cd /workspace
-# copy download_model.py hoặc clone repo
-python download_model.py
+cd data
+# Cần file `.env` (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, POSTGRES_PORT, …) — xem docker-compose
+docker compose up -d
+poetry install
+poetry run python export_dataset.py
 ```
 
-Ghi đè thư mục: `WEIGHTS_DIR=/đường/khác python download_model.py`
+File ghi ra: `../dataset/train.jsonl`, `../dataset/val.jsonl` (ở root repo). Biến kết nối DB đặt trong **`.env` ở root** và/hoặc **`data/.env`** (xem [docs/finetune-process.md](docs/finetune-process.md)).
 
-Model private: `HF_TOKEN=... python download_model.py`
+### 2. Fine-tune (GPU / RunPod, Qwen3.5-9B QLoRA)
 
----
+#### 2.1. Chuẩn bị dataset trên Hugging Face Hub
 
-## 3. GPU Pod — dùng image có sẵn hoặc build repo
-
-- GPU **≥ 24 GB** VRAM, attach **cùng volume** → weights tại **`/workspace/qwen35-awq`** (mặc định).
-
-### Biến môi trường (container)
-
-| Biến | Mặc định | Ý nghĩa |
-|------|----------|---------|
-| `MODEL_PATH` | `/workspace/qwen35-awq` | Thư mục model trên volume |
-| `MAX_MODEL_LEN` | `200000` | Giới hạn token (prompt + sinh); **GPU 24GB** thường phải **hạ** (vd `32768`–`65536`) tránh OOM khi khởi động hoặc context dài |
-| `GPU_MEMORY_UTIL` | `0.90` | Tỷ lệ VRAM cho vLLM |
-| `VLLM_PORT` | `8000` | Cổng HTTP |
-| `VLLM_API_KEY` | (trống) | Nếu set → vLLM bật `--api-key` |
-
-### Image từ GHCR
-
-Deploy pod với image `ghcr.io/<owner>/<repo>:latest`, **không** cần start command tùy chỉnh (entrypoint đã gọi `vllm serve`).
-
-Expose **HTTP port 8000** (hoặc đúng `VLLM_PORT`).
-
-### Build local / tự push
+Chạy trên **máy local** (Mac, nơi bạn có `dataset/*.jsonl`):
 
 ```bash
-docker build -t qwen35-vllm .
-docker run --gpus all -e MODEL_PATH=/path/to/weights -p 8000:8000 qwen35-vllm
+python scripts/upload_dataset.py
 ```
 
----
+Script sẽ:
+- Đọc `.env` ở root để lấy `HF_TOKEN`.
+- Tạo/tái sử dụng một dataset repo private, upload `dataset/train.jsonl` & `dataset/val.jsonl`.
+- In ra dòng gợi ý `HF_DATASET_REPO=...` để copy vào `.env` trên pod.
 
-## 4. Gọi API (OpenAI client)
+#### 2.2. Chuẩn bị pod (RunPod)
 
-`model` trong body thường là **đường dẫn local trên server** (giống doc vLLM), ví dụ:
+Trên pod (container được build từ `Dockerfile` ở root):
 
 ```bash
-curl -s "http://YOUR_POD:8000/v1/chat/completions" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "/workspace/qwen35-awq",
-    "messages": [{"role": "user", "content": "2+2=?"}],
-    "max_tokens": 128
-  }'
+cd /workspace/qwen3-5_serverless   # ví dụ repo mount tại đây
+cp scripts/.env.example .env       # template .env dành cho pod
+vim .env                           # điền HF_TOKEN, MODEL_REPO, HF_DATASET_REPO, OUTPUT_DIR, ...
 ```
 
-Python: `openai` SDK với `base_url="http://YOUR_POD:8000/v1"`. Nếu bật `VLLM_API_KEY`, set `api_key` tương ứng.
-
-### Script có sẵn (biến môi trường)
-
-1. Copy `.env.example` → `.env`, điền **`VLLM_BASE_URL`** = URL proxy RunPod (có cổng trong hostname, **không** cần thêm `/v1`).
-2. Tuỳ chọn: `VLLM_MODEL`, `VLLM_API_KEY` (nếu pod có bật key), `VLLM_PROMPT`, `VLLM_MAX_TOKENS`.
-3. Cài dependency: `pip install -r requirements.txt` hoặc `poetry install`.
-4. Chạy:
+Download base model **Qwen/Qwen3.5-9B** về Network Volume:
 
 ```bash
-python scripts/chat_runpod.py
-python scripts/chat_runpod.py "Viết một câu chào bằng tiếng Việt"
+python scripts/download_model.py
 ```
 
+Sau khi tải xong, đảm bảo trong `.env`:
+
+```bash
+MODEL_PATH=/workspace/base_model   # hoặc WEIGHTS_DIR bạn đã chọn
+```
+
+#### 2.3. Chạy train QLoRA
+
+```bash
+python scripts/train.py
+```
+
+Script `train.py` sẽ:
+- Load model `Qwen3.5-9B` qua **Unsloth FastLanguageModel** với `load_in_4bit=True` (QLoRA 4-bit NF4).
+- Tự động **tắt thinking mode** (`ENABLE_THINKING=false`) khi apply chat template (không sinh `<think>...</think>` trong training text).
+- Load dataset từ:
+  - HF Hub (`HF_DATASET_REPO`) nếu set; hoặc
+  - Local `dataset/train.jsonl` + `dataset/val.jsonl` nếu không set.
+- Sử dụng `DataCollatorForCompletionOnlyLM` để chỉ tính loss trên phần assistant.
+- Áp dụng LoRA với `TARGET_MODULES=all-linear` (Unsloth tự chọn linear layers phù hợp cho kiến trúc hybrid của Qwen3.5).
+- Lưu checkpoint vào `OUTPUT_DIR` và adapter cuối vào `OUTPUT_DIR/final_adapter`.
+
+Hyperparameters (epoch, batch size, gradient accumulation, learning rate, `MAX_SEQ_LEN`, …) cấu hình qua `scripts/.env.example` (copy sang `.env` trên pod rồi chỉnh).
+
 ---
 
-## OOM / pod không lên được sau khi tăng context
+## Tài liệu
 
-`MAX_MODEL_LEN=200000` cấp cho vLLM “trần” rất cao; **KV cache** tính theo đó nên **GPU 24GB** (A5000, 4090, …) thường **không đủ** — hạ trên RunPod → Environment, ví dụ `MAX_MODEL_LEN=32768` hoặc `65536`, rồi restart pod. GPU VRAM lớn hơn mới có thể giữ gần 200k.
-
-## Lỗi `undefined symbol: cuMemcpyBatchAsync` (vLLM `_C.abi3.so`)
-
-Wheel **vLLM nightly** thường yêu cầu **driver NVIDIA mới**; node RunPod cũ hơn sẽ lỗi khi `import vllm`. Image repo này cài **vLLM stable từ PyPI** (không nightly). Nếu vẫn lỗi: thử **region/GPU type khác** trên RunPod hoặc hạ `vllm` xuống bản stable cũ hơn trong `Dockerfile`.
+| File | Mô tả |
+|------|--------|
+| [docs/finetune-process.md](docs/finetune-process.md) | Tiến trình: schema inbox, format sample, export, train/val, Docker port, tách Poetry. |
+| [docs/qlora-cheat-sheet.md](docs/qlora-cheat-sheet.md) | Ghi chú VRAM, vòng đời train, bảng dependency (transformers, trl, peft, …). |
 
 ---
 
-## GHCR
+## Biến môi trường
 
-Workflow `.github/workflows/docker-ghcr.yml` build khi đổi `Dockerfile`, `docker-entrypoint.sh`, `download_model.py`.
+- Sao chép **`.env.example`** → **`.env`** ở root; không commit file chứa secret.
+- `HF_TOKEN`, `RUNPOD_API_KEY`, mật khẩu Postgres — chỉ lưu local hoặc secret manager.

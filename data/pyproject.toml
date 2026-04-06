@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "el-ripley-data"
+version = "0.1.0"
+description = "Docker Postgres, restore, export inbox → JSONL cho fine-tune"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+python-dotenv = ">=1.0.0"
+psycopg2-binary = ">=2.9.0"
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"
